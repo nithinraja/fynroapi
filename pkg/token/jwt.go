@@ -2,44 +2,36 @@ package token
 
 import (
 	"errors"
+	"os"
 	"time"
 
-	"fyrnoapi/config"
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/dgrijalva/jwt-go"
 )
 
-type CustomClaims struct {
-	UserID uint `json:"user_id"`
-	jwt.RegisteredClaims
+func GenerateJWT(userUUID string) (string, error) {
+    secret := []byte(os.Getenv("JWT_SECRET"))
+
+    token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+        "uuid": userUUID,
+        "exp":  time.Now().Add(72 * time.Hour).Unix(),
+    })
+
+    return token.SignedString(secret)
 }
 
-// GenerateJWT creates a new JWT token for a user
-func GenerateJWT(userID uint, expiry time.Duration) (string, error) {
-	claims := CustomClaims{
-		UserID: userID,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiry)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-		},
-	}
+func ValidateJWT(tokenStr string) (map[string]interface{}, error) {
+    secret := []byte(os.Getenv("JWT_SECRET"))
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(config.AppConfig.JWTSecret))
-}
+    token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+        return secret, nil
+    })
 
-// ValidateJWT parses and validates a token, returning the user ID
-func ValidateJWT(tokenStr string) (uint, error) {
-	token, err := jwt.ParseWithClaims(tokenStr, &CustomClaims{}, func(token *jwt.Token) (interface{}, error) {
-		return []byte(config.AppConfig.JWTSecret), nil
-	})
+    if err != nil || !token.Valid {
+        return nil, errors.New("invalid or expired token")
+    }
 
-	if err != nil {
-		return 0, err
-	}
-
-	if claims, ok := token.Claims.(*CustomClaims); ok && token.Valid {
-		return claims.UserID, nil
-	}
-
-	return 0, errors.New("invalid token")
+    if claims, ok := token.Claims.(jwt.MapClaims); ok {
+        return claims, nil
+    }
+    return nil, errors.New("invalid token claims")
 }

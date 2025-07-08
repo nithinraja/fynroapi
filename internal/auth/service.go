@@ -5,71 +5,107 @@ import (
 	"fmt"
 	"time"
 
-	"gorm.io/gorm"
+	"ai-financial-api/config"
+	"ai-financial-api/models"
+	"ai-financial-api/pkg/token"
 
-	"fyrnoapi/config"
-	"fyrnoapi/model"
-	"fyrnoapi/pkg/token"
+	"github.com/google/uuid"
 )
 
-type AuthService struct {
-	DB *gorm.DB
+// func SendOTP(mobile string) error {
+//     otp := generateOTP()
+//     err := SendSMS(mobile, fmt.Sprintf("Your OTP is: %s", otp))
+//     if err != nil {
+//         return err
+//     }
+
+//     record := models.OTPVerification{
+//         Mobile:    mobile,
+//         OTPCode:   otp,
+//         IsVerified: false,
+//     }
+//     return config.DB.Create(&record).Error
+// }
+
+// func VerifyOTP(mobile, otp string) (string, error) {
+//     var record models.OTPVerification
+//     err := config.DB.Where("mobile = ? AND otp_code = ?", mobile, otp).Last(&record).Error
+//     if err != nil || record.ID == 0 {
+//         return "", errors.New("invalid OTP")
+//     }
+
+//     record.IsVerified = true
+//     config.DB.Save(&record)
+
+//     // Create or update user
+//     var user models.User
+//     if err := config.DB.Where("mobile = ?", mobile).First(&user).Error; err != nil {
+//         user = models.User{
+//             UUID:   uuid.New().String(),
+//             Name:   "User_" + mobile,
+//             Mobile: mobile,
+//         }
+//         config.DB.Create(&user)
+//     }
+
+//     jwtToken, err := token.GenerateJWT(user.UUID)
+//     if err != nil {
+//         return "", err
+//     }
+
+//     user.JWTToken = jwtToken
+//     config.DB.Save(&user)
+
+//     return jwtToken, nil
+// }
+
+func SendOTP(mobile string) error {
+    otp := "123456" // 🔐 Fixed OTP for development
+
+    // Log instead of sending via Twilio
+    fmt.Printf("[DEV] OTP for %s is %s\n", mobile, otp)
+
+    record := models.OTPVerification{
+        Mobile:     mobile,
+        OTPCode:    otp,
+        IsVerified: false,
+    }
+    return config.DB.Create(&record).Error
 }
 
-func NewAuthService(db *gorm.DB) *AuthService {
-	return &AuthService{
-		DB: db,
-	}
+
+func VerifyOTP(mobile, otp string) (string, error) {
+    var record models.OTPVerification
+    err := config.DB.Where("mobile = ? AND otp_code = ?", mobile, otp).Last(&record).Error
+    if err != nil || record.ID == 0 {
+        return "", errors.New("invalid OTP")
+    }
+
+    record.IsVerified = true
+    config.DB.Save(&record)
+
+    var user models.User
+    if err := config.DB.Where("mobile = ?", mobile).First(&user).Error; err != nil {
+        user = models.User{
+            UUID:   uuid.New().String(),
+            Name:   "User_" + mobile,
+            Mobile: mobile,
+        }
+        config.DB.Create(&user)
+    }
+
+    jwtToken, err := token.GenerateJWT(user.UUID)
+    if err != nil {
+        return "", err
+    }
+
+    user.JWTToken = jwtToken
+    config.DB.Save(&user)
+
+    return jwtToken, nil
 }
 
-// RequestOTP generates and sends OTP to the given mobile number
-func (s *AuthService) RequestOTP(mobile string) error {
-	// Generate OTP
-	code := otp.GenerateOTP(config.OTPLength)
 
-	// Store OTP in database
-	otpRecord := model.OTP{
-		Mobile:    mobile,
-		Code:      code,
-		ExpiresAt: time.Now().Add(config.OTPExpiry),
-	}
-
-	if err := s.DB.Create(&otpRecord).Error; err != nil {
-		return fmt.Errorf("failed to save OTP: %w", err)
-	}
-
-	// Send via Twilio
-	return twilio.SendOTP(mobile, code)
-}
-
-// VerifyOTP checks the submitted OTP and issues JWT token
-func (s *AuthService) VerifyOTP(mobile, code string) (string, error) {
-	var otpRecord model.OTP
-
-	err := s.DB.Where("mobile = ? AND code = ?", mobile, code).
-		Order("created_at DESC").First(&otpRecord).Error
-
-	if errors.Is(err, gorm.ErrRecordNotFound) || otpRecord.ExpiresAt.Before(time.Now()) {
-		return "", errors.New(config.MessageOTPInvalid)
-	}
-
-	// Find or create user
-	var user model.User
-	err = s.DB.Where("mobile = ?", mobile).First(&user).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		user = model.User{
-			Mobile: mobile,
-		}
-		if err := s.DB.Create(&user).Error; err != nil {
-			return "", fmt.Errorf("failed to create user: %w", err)
-		}
-	}
-
-	// Generate JWT
-	jwtToken, err := token.GenerateJWT(user.ID, config.JWTTokenExpiry)
-	if err != nil {
-		return "", fmt.Errorf("failed to generate token: %w", err)
-	}
-
-	return jwtToken, nil
+func generateOTP() string {
+    return fmt.Sprintf("%06d", time.Now().UnixNano()%1000000)
 }

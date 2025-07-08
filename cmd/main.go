@@ -2,49 +2,32 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 
-	"github.com/gin-gonic/gin"
+	"ai-financial-api/api/v1/middleware"
+	"ai-financial-api/api/v1/router"
+	"ai-financial-api/config"
 
-	v1 "fyrnoapi/api/v1"
-	"fyrnoapi/config"
-	"fyrnoapi/pkg/database"
-	"fyrnoapi/pkg/logger"
+	"github.com/joho/godotenv"
 )
 
 func main() {
-	// Load .env and configuration
-	config.LoadConfig()
+    if err := godotenv.Load(); err != nil {
+        log.Println("No .env file found, proceeding with environment variables.")
+    }
 
-	// Initialize logger
-	log := logger.NewLogger()
-	log.Info("Starting Finance AI backend...")
+    config.ConnectDatabase()
 
-	// Connect to database
-	err := database.ConnectDB()
-	if err != nil {
-		log.WithError(err).Fatal("Could not connect to the database")
-		os.Exit(1)
-	}
+	r := middleware.CORS(router.SetupRouter())
+	r = middleware.Logger(r)
 
-	// Run database migrations
-	err = database.RunMigrations()
-	if err != nil {
-		log.WithError(err).Fatal("Could not run migrations")
-		os.Exit(1)
-	}
+    port := os.Getenv("PORT")
+    if port == "" {
+        port = "8081"
+    }
 
-	// Initialize Gin router
-	router := gin.New()
-
-	// Register API routes
-	v1.RegisterV1Routes(router, log)
-
-	// Start server
-	port := config.AppConfig.ServerPort
-	log.Infof("Server is running at http://localhost:%s", port)
-	err = router.Run(fmt.Sprintf(":%s", port))
-	if err != nil {
-		log.WithError(err).Fatal("Failed to run server")
-	}
+    fmt.Printf("Server running at http://localhost:%s\n", port)
+    log.Fatal(http.ListenAndServe(":"+port, r))
 }

@@ -1,109 +1,48 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
-	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-
-	"fyrnoapi/api/v1/dto"
-	"fyrnoapi/model"
-	"fyrnoapi/pkg/database"
-	"fyrnoapi/pkg/response"
-	"fyrnoapi/pkg/token"
-	"fyrnoapi/pkg/utils"
+	"ai-financial-api/internal/auth"
+	"ai-financial-api/utils"
 )
 
-// SendOTP handles generating OTP and sending it to the user
-func SendOTP(c *gin.Context) {
-	var req dto.SendOTPRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid input", err.Error())
-		return
-	}
+func RequestOTP(w http.ResponseWriter, r *http.Request) {
+    type request struct {
+        Mobile string `json:"mobile"`
+    }
+    var req request
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        utils.ErrorResponse(w, http.StatusBadRequest, "Invalid request payload")
+        return
+    }
 
-	if req.Phone == ""  {
-		response.BadRequest(c, "Phone and Name are required", nil)
-		return
-	}
+    err := auth.SendOTP(req.Mobile)
+    if err != nil {
+        utils.ErrorResponse(w, http.StatusInternalServerError, "Failed to send OTP")
+        return
+    }
 
-	// Check if user already exists
-	var user model.User
-	result := database.DB.Where("phone = ?", req.Phone).First(&user)
-
-	if result.Error != nil {
-		// Create new user if not exists
-		user = model.User{
-			ID:    uuid.New(), 
-			Phone: req.Phone,
-		}
-		if err := database.DB.Create(&user).Error; err != nil {
-			response.InternalServerError(c, "Failed to create user", err.Error())
-			return
-		}
-	}
-
-	// Generate OTP
-	otp := utils.GenerateOTP(6)
-
-	// Send OTP via Twilio
-	err := utils.SendOTPViaTwilio(req.Phone, otp)
-	if err != nil {
-		response.InternalServerError(c, "Failed to send OTP", err.Error())
-		return
-	}
-
-	// Store OTP in session table
-	session := model.Session{
-		ID:        uuid.New(),
-		UserID:    user.ID,
-		Phone:     req.Phone,
-		OTP:       otp,
-		IsUsed:    false,
-		CreatedAt: time.Now(),
-		ExpiresAt: time.Now().Add(5 * time.Minute),
-	}
-	if err := database.DB.Create(&session).Error; err != nil {
-		response.InternalServerError(c, "Failed to store session", err.Error())
-		return
-	}
-
-	response.Success(c, http.StatusOK, "OTP sent successfully", gin.H{
-		"user_id": user.ID,
-	})
+    utils.SuccessResponse(w, "OTP sent successfully")
 }
 
-// VerifyOTP handles OTP validation and JWT token generation
-func VerifyOTP(c *gin.Context) {
-	var req dto.VerifyOTPRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid input", err.Error())
-		return
-	}
+func VerifyOTP(w http.ResponseWriter, r *http.Request) {
+    type request struct {
+        Mobile string `json:"mobile"`
+        OTP    string `json:"otp"`
+    }
+    var req request
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        utils.ErrorResponse(w, http.StatusBadRequest, "Invalid request payload")
+        return
+    }
 
-	var session model.Session
-	err := database.DB.
-		Where("phone = ? AND otp = ? AND is_used = false AND expires_at >= ?", req.Phone, req.OTP, time.Now()).
-		First(&session).Error
+    token, err := auth.VerifyOTP(req.Mobile, req.OTP)
+    if err != nil {
+        utils.ErrorResponse(w, http.StatusUnauthorized, err.Error())
+        return
+    }
 
-	if err != nil {
-		response.Unauthorized(c, "Invalid or expired OTP")
-		return
-	}
-
-	// Mark session as used
-	session.IsUsed = true
-	database.DB.Save(&session)
-
-	// Generate JWT
-	tokenStr, err := token.GenerateToken(session.UserID.String(), session.Phone, time.Hour*24)
-	if err != nil {
-		response.InternalServerError(c, "Failed to generate token", err.Error())
-		return
-	}
-
-	response.Success(c, http.StatusOK, "OTP verified", gin.H{
-		"token": tokenStr,
-	})
+    utils.JSONResponse(w, http.StatusOK, map[string]string{"token": token})
 }

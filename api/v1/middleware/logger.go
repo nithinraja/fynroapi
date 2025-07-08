@@ -1,36 +1,37 @@
 package middleware
 
 import (
+	"log"
+	"net/http"
 	"time"
-
-	"github.com/gin-gonic/gin"
-	"github.com/sirupsen/logrus"
 )
 
-// LoggerMiddleware logs HTTP requests using logrus with detailed information.
-func LoggerMiddleware(logger *logrus.Logger) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Start time
-		startTime := time.Now()
+func Logger(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        start := time.Now()
 
-		// Process request
-		c.Next()
+        // Wrap ResponseWriter to capture status code
+        lrw := &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+        next.ServeHTTP(lrw, r)
 
-		// End time
-		endTime := time.Now()
-		latency := endTime.Sub(startTime)
+        duration := time.Since(start)
 
-		// Get status
-		statusCode := c.Writer.Status()
+        log.Printf("[%s] %s %s %d %s\n",
+            r.Method,
+            r.RequestURI,
+            r.Proto,
+            lrw.statusCode,
+            duration,
+        )
+    })
+}
 
-		// Log fields
-		logger.WithFields(logrus.Fields{
-			"status":   statusCode,
-			"method":   c.Request.Method,
-			"path":     c.Request.URL.Path,
-			"latency":  latency,
-			"ip":       c.ClientIP(),
-			"userAgent": c.Request.UserAgent(),
-		}).Info("HTTP Request")
-	}
+type loggingResponseWriter struct {
+    http.ResponseWriter
+    statusCode int
+}
+
+func (lrw *loggingResponseWriter) WriteHeader(code int) {
+    lrw.statusCode = code
+    lrw.ResponseWriter.WriteHeader(code)
 }
